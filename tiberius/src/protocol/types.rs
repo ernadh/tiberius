@@ -2,7 +2,7 @@ mod numeric;
 
 pub use numeric::Numeric;
 
-use crate::{collation, plp::ReadTyMode, protocol, Error, Result};
+use crate::{collation, plp::ReadTyMode, protocol, uint_enum, Error, Result};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use encoding::{DecoderTrap, Encoding};
 use std::{borrow::Cow, convert::TryFrom};
@@ -88,6 +88,10 @@ pub struct Collation {
 }
 
 impl Collation {
+    pub fn new(info: u32, sort_id: u8) -> Self {
+        Self { info, sort_id }
+    }
+
     /// return the locale id part of the LCID (the specification here uses ambiguous terms)
     pub fn lcid(&self) -> u16 {
         (self.info & 0xffff) as u16
@@ -116,7 +120,7 @@ pub enum TypeInfo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Guid([u8; 16]);
+pub struct Guid(pub(crate) [u8; 16]);
 
 impl Guid {
     pub fn from_bytes(input_bytes: &[u8]) -> Guid {

@@ -96,7 +96,7 @@ where
 }
 
 #[derive(Debug)]
-enum ReceivedToken {
+pub enum ReceivedToken {
     NewResultset(Arc<protocol::TokenColMetaData>),
     Row(protocol::TokenRow),
     Done(protocol::TokenDone),
@@ -162,6 +162,7 @@ impl Connection {
                     .now_or_never()
                     .expect("No receiver registered.");
             }
+
             let recv_token = match ty {
                 protocol::TokenType::ColMetaData => {
                     let meta = Arc::new(reader.read_colmetadata_token(&self.ctx).await?);
@@ -611,6 +612,7 @@ impl<'a> futures_util::stream::Stream for QueryStream<'a> {
                 }
                 Some(token) => token?,
             };
+
             return match token {
                 ReceivedToken::NewResultset(ref meta) => {
                     let column_meta = meta

@@ -1,3 +1,14 @@
+mod codec;
+mod login;
+mod tokenstream;
+mod types;
+mod writer;
+
+pub use login::{LoginMessage, PreloginMessage};
+pub use tokenstream::*;
+pub mod rpc;
+pub use types::ColumnData;
+
 use bitflags::bitflags;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::borrow::Cow;
@@ -52,14 +63,6 @@ macro_rules! uint_enum {
         }
     }
 }
-
-mod tokenstream;
-pub use tokenstream::*;
-mod login;
-pub use login::{LoginMessage, PreloginMessage};
-pub mod rpc;
-mod types;
-pub use types::ColumnData;
 
 uint_enum! {
     #[repr(u32)]
@@ -158,7 +161,7 @@ uint_enum! {
 }
 
 /// packet header consisting of 8 bytes [2.2.3.1]
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct PacketHeader {
     pub ty: PacketType,
     pub status: PacketStatus,
@@ -199,18 +202,25 @@ impl PacketHeader {
 
     pub fn unserialize(buf: &[u8]) -> Result<PacketHeader> {
         let mut cursor = Cursor::new(buf);
+
         let raw_ty = cursor.read_u8()?;
-        Ok(PacketHeader {
-            ty: PacketType::try_from(raw_ty).map_err(|_| {
-                Error::Protocol(format!("header: invalid packet type: {}", raw_ty).into())
-            })?,
-            status: PacketStatus::try_from(cursor.read_u8()?)
-                .map_err(|_| Error::Protocol("header: invalid packet status".into()))?,
+        let ty = PacketType::try_from(raw_ty).map_err(|_| {
+            Error::Protocol(format!("header: invalid packet type: {}", raw_ty).into())
+        })?;
+
+        let status = PacketStatus::try_from(cursor.read_u8()?)
+            .map_err(|_| Error::Protocol("header: invalid packet status".into()))?;
+
+        let header = PacketHeader {
+            ty,
+            status,
             length: cursor.read_u16::<BigEndian>()?,
             spid: cursor.read_u16::<BigEndian>()?,
             id: cursor.read_u8()?,
             window: cursor.read_u8()?,
-        })
+        };
+
+        Ok(header)
     }
 }
 

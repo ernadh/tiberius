@@ -8,6 +8,7 @@ use tokio::io::AsyncRead;
 
 use crate::protocol;
 use crate::protocol::types::ColumnData;
+use crate::uint_enum;
 use crate::{Error, Result};
 
 fn read_varchar(b: &[u8]) -> Result<String> {
