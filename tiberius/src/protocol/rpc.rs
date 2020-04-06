@@ -5,7 +5,7 @@ use byteorder::LittleEndian;
 use tokio::io::AsyncWrite;
 
 use crate::protocol::{
-    self, types::ColumnData, PacketHeader, PacketStatus, PacketType, PacketWriter,
+    self, codec::ColumnData, PacketHeader, PacketStatus, PacketType, PacketWriter,
 };
 use crate::{Error, Result};
 

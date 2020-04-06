@@ -1,16 +1,17 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use crate::protocol;
 use crate::protocol::rpc::{
     RpcOptionFlags, RpcParam, RpcProcId, RpcProcIdValue, RpcStatusFlags, TokenRpcRequest,
 };
-use crate::protocol::{self, ColumnData};
 use crate::row;
 use crate::{Error, MotoredFuture, QueryStream, ReceivedToken, Result, ResultSet};
 use async_stream::try_stream;
 use bitflags::bitflags;
 use futures_util::future::FutureExt;
 use futures_util::stream::StreamExt;
+use protocol::codec::ColumnData;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{self, mpsc};
 use tracing::{self, debug_span, event, trace_span, Level};

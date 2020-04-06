@@ -1,4 +1,4 @@
-mod codec;
+pub mod codec;
 mod login;
 mod tokenstream;
 mod types;
@@ -7,15 +7,17 @@ mod writer;
 pub use login::{LoginMessage, PreloginMessage};
 pub use tokenstream::*;
 pub mod rpc;
-pub use types::ColumnData;
 
 use bitflags::bitflags;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::borrow::Cow;
-use std::convert::TryFrom;
-use std::io::{self, Cursor, Write};
-use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
-use std::sync::Arc;
+use codec::*;
+use std::{
+    borrow::Cow,
+    convert::TryFrom,
+    io::{self, Cursor, Write},
+    sync::atomic::{AtomicU32, AtomicU8, Ordering},
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::Mutex,
@@ -76,6 +78,16 @@ uint_enum! {
         SqlServer2008R2 = 0x730B0003,
         /// 2012, 2014, 2016
         SqlServerN = 0x74000004,
+    }
+}
+
+impl FeatureLevel {
+    pub fn done_row_count_bytes(self) -> u8 {
+        if self as u8 >= FeatureLevel::SqlServer2005 as u8 {
+            8
+        } else {
+            4
+        }
     }
 }
 

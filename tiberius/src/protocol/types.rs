@@ -5,79 +5,9 @@ pub use numeric::Numeric;
 use crate::{collation, plp::ReadTyMode, protocol, uint_enum, Error, Result};
 use byteorder::{ByteOrder, LittleEndian, ReadBytesExt};
 use encoding::{DecoderTrap, Encoding};
+use protocol::codec::*;
 use std::{borrow::Cow, convert::TryFrom};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufWriter};
-
-uint_enum! {
-    #[repr(u8)]
-    pub enum FixedLenType {
-        Null = 0x1F,
-        Int1 = 0x30,
-        Bit = 0x32,
-        Int2 = 0x34,
-        Int4 = 0x38,
-        Datetime4 = 0x3A,
-        Float4 = 0x3B,
-        Money = 0x3C,
-        Datetime = 0x3D,
-        Float8 = 0x3E,
-        Money4 = 0x7A,
-        Int8 = 0x7F,
-    }
-}
-
-uint_enum! {
-    /// 2.2.5.4.2
-    #[repr(u8)]
-    pub enum VarLenType {
-        Guid = 0x24,
-        Intn = 0x26,
-        Bitn = 0x68,
-        Decimaln = 0x6A,
-        Numericn = 0x6C,
-        Floatn = 0x6D,
-        Money = 0x6E,
-        Datetimen = 0x6F,
-        /// introduced in TDS 7.3
-        Daten = 0x28,
-        /// introduced in TDS 7.3
-        Timen = 0x29,
-        /// introduced in TDS 7.3
-        Datetime2 = 0x2A,
-        /// introduced in TDS 7.3
-        DatetimeOffsetn = 0x2B,
-        BigVarBin = 0xA5,
-        BigVarChar = 0xA7,
-        BigBinary = 0xAD,
-        BigChar = 0xAF,
-        NVarchar = 0xE7,
-        NChar = 0xEF,
-        // not supported yet
-        Xml = 0xF1,
-        // not supported yet
-        Udt = 0xF0,
-        Text = 0x23,
-        Image = 0x22,
-        NText = 0x63,
-        // not supported yet
-        SSVariant = 0x62, // legacy types (not supported since post-7.2):
-                        // Char = 0x2F,
-                        // VarChar = 0x27,
-                        // Binary = 0x2D,
-                        // VarBinary = 0x25,
-                        // Numeric = 0x3F,
-                        // Decimal = 0x37
-    }
-}
-
-impl VarLenType {
-    fn bytes_length(&self) -> usize {
-        match *self {
-            VarLenType::Intn => 1,
-            typ => unimplemented!("For type {:?}", typ),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Collation {
@@ -107,18 +37,6 @@ impl Collation {
     }
 }
 
-#[derive(Debug)]
-pub enum TypeInfo {
-    FixedLen(FixedLenType),
-    VarLenSized(VarLenType, usize, Option<Collation>),
-    VarLenSizedPrecision {
-        ty: VarLenType,
-        size: usize,
-        precision: u8,
-        scale: u8,
-    },
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Guid(pub(crate) [u8; 16]);
 
@@ -132,121 +50,6 @@ impl Guid {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ColumnData<'a> {
-    None,
-    I8(i8),
-    I16(i16),
-    I32(i32),
-    I64(i64),
-    F32(f32),
-    F64(f64),
-    Bit(bool),
-    String(Cow<'a, str>),
-    Guid(Cow<'a, Guid>),
-    Binary(Cow<'a, [u8]>),
-    Numeric(Numeric),
-    /* Guid(Cow<'a, Guid>),
-    DateTime(time::DateTime),
-    SmallDateTime(time::SmallDateTime),
-    Time(time::Time),
-    Date(time::Date),
-    DateTime2(time::DateTime2),
-    /// a buffer string which is a reference to a buffer of a received packet
-    BString(Str),
-     */
-}
-
-impl<'a> ColumnData<'a> {
-    pub async fn write_to<C>(
-        &self,
-        ctx: &protocol::Context,
-        writer: &mut protocol::PacketWriter<'a, C>,
-    ) -> Result<()>
-    where
-        C: AsyncWrite + Unpin,
-    {
-        match *self {
-            ColumnData::Bit(val) => {
-                let bytes = [&[VarLenType::Bitn as u8, 1, 1, val as u8][..]].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::I8(val) => {
-                let bytes = [&[VarLenType::Intn as u8, 1, 1][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::I16(val) => {
-                let bytes = [&[VarLenType::Intn as u8, 2, 2][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::I32(val) => {
-                let bytes = [&[VarLenType::Intn as u8, 4, 4][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::I64(val) => {
-                let bytes = [&[VarLenType::Intn as u8, 8, 8][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::F32(val) => {
-                let bytes = [&[VarLenType::Floatn as u8, 4, 4][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::F64(val) => {
-                let bytes = [&[VarLenType::Floatn as u8, 8, 8][..], &val.to_le_bytes()].concat();
-                writer.write_bytes(&ctx, &bytes).await?;
-            }
-            ColumnData::String(ref str_) if str_.len() <= 4000 => {
-                let header = [
-                    &[VarLenType::NVarchar as u8],
-                    &8000u16.to_le_bytes()[..],
-                    &[0u8; 5][..],
-                    &(2 * str_.len() as u16).to_le_bytes(),
-                ]
-                .concat();
-
-                writer.write_bytes(&ctx, &header).await?;
-
-                for chr in str_.encode_utf16() {
-                    writer.write_bytes(&ctx, &chr.to_le_bytes()).await?;
-                }
-            }
-            ColumnData::String(ref str_) => {
-                // length: 0xffff and raw collation
-                let header = [
-                    &[VarLenType::NVarchar as u8],
-                    &[0xff as u8; 2][..],
-                    &[0u8; 5][..],
-                    // we cannot cheaply predetermine the length of the UCS2 string beforehand
-                    // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
-                    &(0xfffffffffffffffe as u64).to_le_bytes(),
-                ]
-                .concat();
-
-                writer.write_bytes(&ctx, &header).await?;
-
-                // Write the varchar length
-                let ary: Vec<_> = str_.encode_utf16().collect();
-                let ary_len = ((ary.len() * 2) as u32).to_le_bytes();
-                writer.write_bytes(&ctx, &ary_len).await?;
-
-                // And the PLP data
-                for chr in ary {
-                    writer.write_bytes(&ctx, &chr.to_le_bytes()).await?;
-                }
-
-                // PLP_TERMINATOR
-                writer.write_bytes(&ctx, &0u32.to_le_bytes()).await?;
-            }
-            // TODO
-            ColumnData::None => {}
-            ColumnData::Guid(_) => {}
-            ColumnData::Binary(_) => {}
-            ColumnData::Numeric(_) => {}
-        }
-        Ok(())
     }
 }
 
@@ -312,7 +115,7 @@ impl<'a, C: AsyncRead + Unpin> protocol::PacketReader<'a, C> {
     pub async fn read_column_data(
         &mut self,
         ctx: &protocol::Context,
-        meta: &protocol::tokenstream::BaseMetaDataColumn,
+        meta: &BaseMetaDataColumn,
     ) -> Result<ColumnData<'static>> {
         let ret = match meta.ty {
             TypeInfo::FixedLen(ref fixed_ty) => self.read_fixed_len_type(&ctx, *fixed_ty).await?,

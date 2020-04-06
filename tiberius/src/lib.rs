@@ -10,8 +10,8 @@ use futures_util::{
 };
 use parking_lot::Mutex;
 use protocol::{
+    codec::*,
     rpc::{RpcOptionFlags, RpcParam, RpcProcId, RpcProcIdValue, RpcStatusFlags, TokenRpcRequest},
-    ColumnData,
 };
 use std::{
     borrow::Cow,
@@ -97,10 +97,10 @@ where
 
 #[derive(Debug)]
 pub enum ReceivedToken {
-    NewResultset(Arc<protocol::TokenColMetaData>),
-    Row(protocol::TokenRow),
-    Done(protocol::TokenDone),
-    DoneProc(protocol::TokenDone),
+    NewResultset(Arc<TokenColMetaData>),
+    Row(TokenRow),
+    Done(TokenDone),
+    DoneProc(TokenDone),
     ReturnStatus(u32),
     ReturnValue(protocol::TokenReturnValue),
 }
@@ -164,49 +164,47 @@ impl Connection {
             }
 
             let recv_token = match ty {
-                protocol::TokenType::ColMetaData => {
+                TokenType::ColMetaData => {
                     let meta = Arc::new(reader.read_colmetadata_token(&self.ctx).await?);
                     self.ctx.set_last_meta(meta.clone());
                     ReceivedToken::NewResultset(meta)
                 }
-                protocol::TokenType::Row => {
+                TokenType::Row => {
                     let row = reader.read_row_token(&self.ctx).await?;
                     event!(Level::TRACE, sent_row= ?row);
                     ReceivedToken::Row(row)
                 }
-                protocol::TokenType::Done | protocol::TokenType::DoneInProc => {
+                TokenType::Done | TokenType::DoneInProc => {
                     let done = reader.read_done_token(&self.ctx).await?;
 
                     // TODO: make sure we panic when executing 2 queries but only expecting one result
-                    if ty == protocol::TokenType::Done
-                        && !done.status.contains(protocol::DoneStatus::MORE)
-                    {
+                    if ty == TokenType::Done && !done.status.contains(DoneStatus::MORE) {
                         next_receiver = true;
                     }
                     ReceivedToken::Done(done)
                 }
-                protocol::TokenType::DoneProc => {
+                TokenType::DoneProc => {
                     let done = reader.read_done_token(&self.ctx).await?;
                     next_receiver = true;
                     ReceivedToken::DoneProc(done)
                 }
-                protocol::TokenType::ReturnStatus => {
+                TokenType::ReturnStatus => {
                     let return_status = reader.read_return_status_token(&self.ctx).await?;
                     ReceivedToken::ReturnStatus(return_status)
                 }
-                protocol::TokenType::ReturnValue => {
+                TokenType::ReturnValue => {
                     let return_value = reader.read_return_value_token(&self.ctx).await?;
                     ReceivedToken::ReturnValue(return_value)
                 }
-                protocol::TokenType::Error => {
+                TokenType::Error => {
                     let err = reader.read_error_token(&self.ctx).await?;
                     return Err(error::Error::Server(err));
                 }
-                protocol::TokenType::Order => {
+                TokenType::Order => {
                     let _ = reader.read_order_token(&self.ctx).await?;
                     continue;
                 }
-                protocol::TokenType::ColInfo => {
+                TokenType::ColInfo => {
                     let _ = reader.read_colinfo_token(&self.ctx).await?;
                     continue;
                 }
@@ -634,7 +632,7 @@ impl<'a> futures_util::stream::Stream for QueryStream<'a> {
                     Poll::Ready(Some(Ok(row::Row { columns, data: row })))
                 }
                 ReceivedToken::Done(ref done) | ReceivedToken::DoneProc(ref done) => {
-                    if !done.status.contains(protocol::DoneStatus::MORE) {
+                    if !done.status.contains(DoneStatus::MORE) {
                         self.state = QueryStreamState::Done;
                     } else {
                         self.state = QueryStreamState::HasPotentiallyNext;
@@ -673,16 +671,14 @@ impl Stream for PreparedStream {
                     }
                     Poll::Ready(Some(Ok(token)))
                 }
-                Some(ReceivedToken::Done(done))
-                    if done.status.contains(protocol::DoneStatus::MORE) =>
-                {
+                Some(ReceivedToken::Done(done)) if done.status.contains(DoneStatus::MORE) => {
                     // we do not know yet, if what follows is the trailer of the stored procedure call or another resultset
                     self.read_ahead = Some(ReceivedToken::Done(done));
                     continue;
                 }
                 Some(ReceivedToken::DoneProc(done)) => {
                     // ... other stored procedures that we "called"
-                    if done.status.contains(protocol::DoneStatus::MORE) {
+                    if done.status.contains(DoneStatus::MORE) {
                         continue;
                     }
                     // signal completion of all resultsets, when the stored procedure completed

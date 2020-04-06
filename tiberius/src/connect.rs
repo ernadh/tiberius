@@ -1,5 +1,5 @@
 use crate::{
-    protocol::{self, EncryptionLevel},
+    protocol::{self, codec::TokenType, EncryptionLevel},
     tls::{MaybeTlsStream, TlsPreloginWrapper, TlsStream},
     Connection, Error, Result,
 };
@@ -147,7 +147,7 @@ where
     let mut ts = protocol::TokenStreamReader::new(protocol::PacketReader::new(&mut reader));
     loop {
         match ts.read_token().await? {
-            protocol::TokenType::EnvChange => {
+            TokenType::EnvChange => {
                 let change = ts.read_env_change_token().await?;
                 match change {
                     protocol::TokenEnvChange::PacketSize(new_size, _) => {
@@ -157,13 +157,13 @@ where
                 }
                 println!("env change {:?}", change);
             }
-            protocol::TokenType::Info => {
+            TokenType::Info => {
                 println!("info {:?}", ts.read_info_token().await?);
             }
-            protocol::TokenType::LoginAck => {
+            TokenType::LoginAck => {
                 println!("login ack {:?}", ts.read_login_ack_token().await?);
             }
-            protocol::TokenType::Done => {
+            TokenType::Done => {
                 println!("done {:?}", ts.read_done_token(&connecting.ctx).await?);
                 break;
             }
@@ -595,7 +595,7 @@ impl<T: TlsStream> Connecting<MaybeTlsStream<T>> {
         reader.read_packet_with_header(&header).await?;
 
         let mut reader = protocol::TokenStreamReader::new(reader);
-        assert_eq!(reader.read_token().await?, protocol::TokenType::SSPI);
+        assert_eq!(reader.read_token().await?, TokenType::SSPI);
         let sspi_bytes = reader.read_sspi_token().await?;
         event!(Level::TRACE, sspi_len = sspi_bytes.len());
         match sspi_client.next_bytes(Some(sspi_bytes))? {

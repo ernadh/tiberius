@@ -66,7 +66,9 @@ where
 
     pub async fn finish(mut self) -> crate::Result<()> {
         self.header_template.status = PacketStatus::EndOfMessage;
+
         self.flush_packet().await?;
+
         self.sink.flush().await?;
 
         Ok(())

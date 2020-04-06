@@ -7,7 +7,7 @@ use byteorder::{BigEndian, LittleEndian, ReadBytesExt};
 use tokio::io::AsyncRead;
 
 use crate::protocol;
-use crate::protocol::types::ColumnData;
+use crate::protocol::codec::*;
 use crate::uint_enum;
 use crate::{Error, Result};
 
@@ -30,28 +30,6 @@ impl<T: AsRef<[u8]>> ReadSlice for Cursor<T> {
         let pos = self.position() as usize;
         self.set_position((pos + length) as u64);
         &self.get_ref().as_ref()[pos..pos + length]
-    }
-}
-
-uint_enum! {
-    pub enum TokenType {
-        ReturnStatus = 0x79,
-        ColMetaData = 0x81,
-        Error = 0xAA,
-        Info = 0xAB,
-        Order = 0xA9,
-        ColInfo = 0xA5,
-        ReturnValue = 0xAC,
-        LoginAck = 0xAD,
-        Row = 0xD1,
-        NbcRow = 0xD2,
-        SSPI = 0xED,
-        EnvChange = 0xE3,
-        Done = 0xFD,
-        /// stored procedure completed
-        DoneProc = 0xFE,
-        /// sql within stored procedure completed
-        DoneInProc = 0xFF,
     }
 }
 
@@ -119,60 +97,6 @@ pub struct TokenLoginAck {
     version: u32,
 }
 
-bitflags! {
-    pub struct DoneStatus: u16 {
-        const MORE = 0x1;
-        const ERROR = 0x2;
-        const INEXACT = 0x4;
-        const COUNT = 0x10;
-        const ATTENTION = 0x20;
-        const RPC_IN_BATCH  = 0x80;
-        const SRVERROR = 0x100;
-    }
-}
-
-#[derive(Debug)]
-pub struct TokenDone {
-    pub status: DoneStatus,
-    pub cur_cmd: u16,
-    pub done_rows: u64,
-}
-
-bitflags! {
-    pub struct ColmetaDataFlags: u16 {
-        const CDF_NULLABLE            = 1<<0;
-        const CDF_CASE_SENSITIVE      = 1<<1;
-        const CDF_UPDATEABLE          = 1<<3;
-        const CDF_UPDATEABLE_UNKNOWN  = 1<<4;
-        const CDF_IDENTITY            = 1<<5;
-        const CDF_COMPUTED            = 1<<7;
-        // 2 bits reserved for ODBC gateway
-        const CDF_FIXED_LEN_CLR_TYPE  = 1<<10;
-        const CDF_SPARSE_COLUMN_SET   = 1<<11;
-        const CDF_ENCRYPTED           = 1<<12;
-        const CDF_HIDDEN              = 1<<13;
-        const CDF_KEY                 = 1<<14;
-        const CDF_NULLABLE_UNKNOWN    = 1<<15;
-    }
-}
-
-#[derive(Debug)]
-pub struct TokenColMetaData {
-    pub columns: Vec<MetaDataColumn>,
-}
-
-#[derive(Debug)]
-pub struct BaseMetaDataColumn {
-    pub flags: ColmetaDataFlags,
-    pub ty: protocol::types::TypeInfo,
-}
-
-#[derive(Debug)]
-pub struct MetaDataColumn {
-    pub base: BaseMetaDataColumn,
-    pub col_name: String,
-}
-
 #[derive(Clone, Debug, thiserror::Error)]
 pub struct TokenError {
     /// ErrorCode
@@ -196,12 +120,6 @@ impl fmt::Display for TokenError {
             self.message, self.server, self.procedure, self.line, self.code, self.state, self.class
         )
     }
-}
-
-#[derive(Debug)]
-pub struct TokenRow {
-    pub meta: Arc<TokenColMetaData>,
-    pub columns: Vec<ColumnData<'static>>,
 }
 
 #[derive(Debug)]
@@ -451,10 +369,7 @@ impl<'a, C: AsyncRead + Unpin> TokenStreamReader<'a, C> {
             .clone()
             .ok_or(Error::Protocol("missing colmeta data".into()))?;
 
-        let mut row = TokenRow {
-            meta: col_meta.clone(),
-            columns: Vec::with_capacity(col_meta.columns.len()),
-        };
+        let mut row = TokenRow::new(col_meta.clone());
 
         for column in col_meta.columns.iter() {
             let data = self.reader.read_column_data(ctx, &column.base).await?;
