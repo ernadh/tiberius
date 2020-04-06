@@ -1,11 +1,11 @@
-use super::{BaseMetaDataColumn, BytesData, Decode, FixedLenType, TypeInfo, VarLenType};
+use super::{BaseMetaDataColumn, BytesData, Decode, Encode, FixedLenType, TypeInfo, VarLenType};
 use crate::{
     plp::{ReadTyMode, ReadTyState},
     protocol::{self, types::Numeric},
     Error,
 };
 use byteorder::{ByteOrder, LittleEndian};
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, BufMut, BytesMut};
 use encoding::DecoderTrap;
 use protocol::types::{Collation, Guid};
 use std::borrow::Cow;
@@ -257,6 +257,94 @@ impl<'a> Decode<'a, BytesData<'a, VariableLengthPrecisionContext>> for ColumnDat
                 src.context().scale,
             )))
         }
+    }
+}
+
+impl<'a> Encode<'a, BytesMut> for ColumnData<'a> {
+    fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        match self {
+            ColumnData::Bit(val) => {
+                let header = [&[VarLenType::Bitn as u8, 1, 1][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_u8(val as u8);
+            }
+            ColumnData::I8(val) => {
+                let header = [&[VarLenType::Intn as u8, 1, 1][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_i8(val);
+            }
+            ColumnData::I16(val) => {
+                let header = [&[VarLenType::Intn as u8, 2, 2][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_i16_le(val);
+            }
+            ColumnData::I32(val) => {
+                let header = [&[VarLenType::Intn as u8, 4, 4][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_i32_le(val);
+            }
+            ColumnData::I64(val) => {
+                let header = [&[VarLenType::Intn as u8, 8, 8][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_i64_le(val);
+            }
+            ColumnData::F32(val) => {
+                let header = [&[VarLenType::Floatn as u8, 4, 4][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_f32_le(val);
+            }
+            ColumnData::F64(val) => {
+                let header = [&[VarLenType::Floatn as u8, 8, 8][..]].concat();
+
+                dst.extend_from_slice(&header);
+                dst.put_f64_le(val);
+            }
+            ColumnData::String(ref s) if s.len() <= 4000 => {
+                dst.put_u8(VarLenType::NVarchar as u8);
+                dst.put_u16_le(8000);
+                dst.extend_from_slice(&[0u8; 5][..]);
+                dst.put_u16_le(2 * s.len() as u16);
+
+                for chr in s.encode_utf16() {
+                    dst.put_u16_le(chr);
+                }
+            }
+            ColumnData::String(ref str_) => {
+                // length: 0xffff and raw collation
+                dst.put_u8(VarLenType::NVarchar as u8);
+                dst.extend_from_slice(&[0xff as u8; 2][..]);
+                dst.extend_from_slice(&[0u8; 5][..]);
+
+                // we cannot cheaply predetermine the length of the UCS2 string beforehand
+                // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
+                dst.put_u64_le(0xfffffffffffffffe as u64);
+
+                // Write the varchar length
+                let ary: Vec<_> = str_.encode_utf16().collect();
+                dst.put_u32_le((ary.len() * 2) as u32);
+
+                // And the PLP data
+                for chr in ary {
+                    dst.put_u16_le(chr);
+                }
+
+                // PLP_TERMINATOR
+                dst.put_u32_le(0);
+            }
+            // TODO
+            ColumnData::None => {}
+            ColumnData::Guid(_) => {}
+            ColumnData::Binary(_) => {}
+            ColumnData::Numeric(_) => {}
+        }
+
+        Ok(())
     }
 }
 

@@ -1,6 +1,8 @@
 mod column_data;
 mod decode;
+mod encode;
 mod macros;
+mod rpc_request;
 mod token_col_metadata;
 mod token_done;
 mod token_row;
@@ -9,6 +11,8 @@ mod type_info;
 
 pub use column_data::*;
 pub use decode::*;
+pub use encode::*;
+pub use rpc_request::*;
 pub use token_col_metadata::*;
 pub use token_done::*;
 pub use token_row::*;
@@ -16,7 +20,6 @@ pub use token_type::*;
 pub use type_info::*;
 
 use super::{
-    rpc::{RpcParam, RpcProcIdValue, TokenRpcRequest},
     types::{Collation, Guid, Numeric},
     FeatureLevel, PacketHeader, PacketStatus, PacketType, TokenReturnValue,
 };
@@ -43,16 +46,26 @@ enum AllHeaderTy {
     TraceActivity = 3,
 }
 
-bitflags! {
-    struct RpcOptionFlags: u16 {
-        const WITH_RECOMP   = 0x01;
-        const NO_META       = 0x02;
-        const REUSE_META    = 0x04;
-        // <- 13 reserved bits
+pub struct BytesData<'a, C> {
+    src: &'a mut BytesMut,
+    context: &'a C,
+}
+
+impl<'a, C> BytesData<'a, C> {
+    pub fn new(src: &'a mut BytesMut, context: &'a C) -> Self {
+        Self { src, context }
+    }
+
+    pub fn inner(&mut self) -> &mut BytesMut {
+        self.src
+    }
+
+    pub fn context(&self) -> &'a C {
+        self.context
     }
 }
 
-pub(crate) fn read_varchar(src: &mut BytesMut, len: impl Into<usize>) -> crate::Result<String> {
+pub(crate) fn read_varchar<B: Buf>(src: &mut B, len: impl Into<usize>) -> crate::Result<String> {
     let len = len.into();
     let mut buf = vec![0u16; len / 2];
 
@@ -129,150 +142,6 @@ impl<'a> Encoder<Bytes> for RedmondCodec<'a> {
 
     fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> crate::Result<()> {
         dst.extend_from_slice(&item);
-        Ok(())
-    }
-}
-
-impl<'a> Encoder<TokenRpcRequest<'a>> for RedmondCodec<'a> {
-    type Error = Error;
-
-    fn encode(&mut self, item: TokenRpcRequest<'a>, _dst: &mut BytesMut) -> crate::Result<()> {
-        let mut buf = BytesMut::new();
-
-        // build the general header for the packet
-        let mut _header = PacketHeader {
-            ty: PacketType::RPC,
-            status: PacketStatus::NormalMessage,
-            ..self.context.new_header(0)
-        };
-
-        self.write_trans_descriptor(&mut buf, 0)?;
-
-        match item.proc_id {
-            RpcProcIdValue::Id(ref id) => {
-                let val = (0xffff as u32) | ((*id as u16) as u32) << 16;
-                buf.put_u32_le(val);
-            }
-            RpcProcIdValue::Name(ref _name) => {
-                //let (left_bytes, _) = try!(write_varchar::<u16>(&mut cursor, name, 0));
-                //assert_eq!(left_bytes, 0);
-                todo!()
-            }
-        }
-
-        buf.put_u16_le(item.flags.bits() as u16);
-
-        for param in item.params.into_iter() {
-            self.encode(param, &mut buf)?;
-        }
-
-        todo!()
-    }
-}
-
-impl<'a> Encoder<RpcParam<'a>> for RedmondCodec<'a> {
-    type Error = Error;
-
-    fn encode(&mut self, item: RpcParam<'a>, dst: &mut BytesMut) -> crate::Result<()> {
-        dst.put_u8(item.name.len() as u8);
-
-        for codepoint in item.name.encode_utf16() {
-            dst.put_u16_le(codepoint);
-        }
-
-        dst.put_u8(item.flags.bits());
-        self.encode(item.value, dst)?;
-
-        Ok(())
-    }
-}
-
-impl<'a> Encoder<ColumnData<'a>> for RedmondCodec<'a> {
-    type Error = Error;
-
-    fn encode(&mut self, item: ColumnData<'a>, dst: &mut BytesMut) -> crate::Result<()> {
-        match item {
-            ColumnData::Bit(val) => {
-                let header = [&[VarLenType::Bitn as u8, 1, 1][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_u8(val as u8);
-            }
-            ColumnData::I8(val) => {
-                let header = [&[VarLenType::Intn as u8, 1, 1][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_i8(val);
-            }
-            ColumnData::I16(val) => {
-                let header = [&[VarLenType::Intn as u8, 2, 2][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_i16_le(val);
-            }
-            ColumnData::I32(val) => {
-                let header = [&[VarLenType::Intn as u8, 4, 4][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_i32_le(val);
-            }
-            ColumnData::I64(val) => {
-                let header = [&[VarLenType::Intn as u8, 8, 8][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_i64_le(val);
-            }
-            ColumnData::F32(val) => {
-                let header = [&[VarLenType::Floatn as u8, 4, 4][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_f32_le(val);
-            }
-            ColumnData::F64(val) => {
-                let header = [&[VarLenType::Floatn as u8, 8, 8][..]].concat();
-
-                dst.extend_from_slice(&header);
-                dst.put_f64_le(val);
-            }
-            ColumnData::String(ref s) if s.len() <= 4000 => {
-                dst.put_u8(VarLenType::NVarchar as u8);
-                dst.put_u16_le(8000);
-                dst.extend_from_slice(&[0u8; 5][..]);
-                dst.put_u16_le(2 * s.len() as u16);
-
-                for chr in s.encode_utf16() {
-                    dst.put_u16_le(chr);
-                }
-            }
-            ColumnData::String(ref str_) => {
-                // length: 0xffff and raw collation
-                dst.put_u8(VarLenType::NVarchar as u8);
-                dst.extend_from_slice(&[0xff as u8; 2][..]);
-                dst.extend_from_slice(&[0u8; 5][..]);
-
-                // we cannot cheaply predetermine the length of the UCS2 string beforehand
-                // (2 * bytes(UTF8) is not always right) - so just let the SQL server handle it
-                dst.put_u64_le(0xfffffffffffffffe as u64);
-
-                // Write the varchar length
-                let ary: Vec<_> = str_.encode_utf16().collect();
-                dst.put_u32_le((ary.len() * 2) as u32);
-
-                // And the PLP data
-                for chr in ary {
-                    dst.put_u16_le(chr);
-                }
-
-                // PLP_TERMINATOR
-                dst.put_u32_le(0);
-            }
-            // TODO
-            ColumnData::None => {}
-            ColumnData::Guid(_) => {}
-            ColumnData::Binary(_) => {}
-            ColumnData::Numeric(_) => {}
-        }
-
         Ok(())
     }
 }

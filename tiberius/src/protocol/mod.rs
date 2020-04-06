@@ -6,7 +6,6 @@ mod writer;
 
 pub use login::{LoginMessage, PreloginMessage};
 pub use tokenstream::*;
-pub mod rpc;
 
 use bitflags::bitflags;
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};

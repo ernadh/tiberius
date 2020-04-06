@@ -9,10 +9,7 @@ use futures_util::{
     stream::{Stream, StreamExt},
 };
 use parking_lot::Mutex;
-use protocol::{
-    codec::*,
-    rpc::{RpcOptionFlags, RpcParam, RpcProcId, RpcProcIdValue, RpcStatusFlags, TokenRpcRequest},
-};
+use protocol::codec::*;
 use std::{
     borrow::Cow,
     collections::HashMap,
