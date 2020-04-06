@@ -1,6 +1,7 @@
 mod column_data;
 mod decode;
 mod encode;
+mod header;
 mod macros;
 mod rpc_request;
 mod token_col_metadata;
@@ -12,6 +13,7 @@ mod type_info;
 pub use column_data::*;
 pub use decode::*;
 pub use encode::*;
+pub use header::*;
 pub use rpc_request::*;
 pub use token_col_metadata::*;
 pub use token_done::*;
@@ -21,7 +23,7 @@ pub use type_info::*;
 
 use super::{
     types::{Collation, Guid, Numeric},
-    FeatureLevel, PacketHeader, PacketStatus, PacketType, TokenReturnValue,
+    FeatureLevel, TokenReturnValue,
 };
 use crate::{
     plp::{ReadTyMode, ReadTyState},

@@ -1,11 +1,15 @@
 use crate::{
-    protocol::{self, codec::TokenType, EncryptionLevel},
+    protocol::{
+        self,
+        codec::{PacketHeader, PacketStatus, PacketType, TokenType},
+        EncryptionLevel,
+    },
     tls::{MaybeTlsStream, TlsPreloginWrapper, TlsStream},
     Connection, Error, Result,
 };
 use futures_util::future::{self, FutureExt};
 use parking_lot::Mutex;
-use protocol::LoginMessage;
+use protocol::{LoginMessage, PacketReader, PreloginMessage};
 use std::{
     collections::HashMap, convert::TryInto, future::Future, net::SocketAddr, net::ToSocketAddrs,
     pin::Pin, sync::atomic::Ordering, sync::Arc, time::Duration,
@@ -412,7 +416,7 @@ struct Connecting<S> {
 impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Connecting<S> {
     async fn prelogin(&mut self) -> Result<()> {
         // Send PreLogin
-        let mut msg = protocol::PreloginMessage::new();
+        let mut msg = PreloginMessage::new();
         msg.encryption = self.params.ssl;
         if msg.encryption != EncryptionLevel::NotSupported {
             #[cfg(not(feature = "tls"))]
@@ -421,17 +425,17 @@ impl<S: AsyncRead + AsyncWrite + Unpin + 'static> Connecting<S> {
             );
         }
         let mut buf = msg.serialize()?;
-        let header = protocol::PacketHeader {
-            ty: protocol::PacketType::PreLogin,
-            status: protocol::PacketStatus::EndOfMessage,
+        let header = PacketHeader {
+            ty: PacketType::PreLogin,
+            status: PacketStatus::EndOfMessage,
             ..self.ctx.new_header(buf.len())
         };
         header.serialize(&mut buf)?;
         self.stream.write_all(&buf).await?;
 
         // Wait for PreLogin response
-        let mut reader = protocol::PacketReader::new(&mut self.stream);
-        let response = protocol::PreloginMessage::unserialize(&mut reader).await?;
+        let mut reader = PacketReader::new(&mut self.stream);
+        let response = PreloginMessage::unserialize(&mut reader).await?;
         self.params.ssl = match (msg.encryption, response.encryption) {
             (EncryptionLevel::NotSupported, EncryptionLevel::NotSupported) => {
                 EncryptionLevel::NotSupported
@@ -516,9 +520,9 @@ impl<T: TlsStream> Connecting<MaybeTlsStream<T>> {
 
                 let mut buf = login_message.serialize(&self.ctx)?;
 
-                let header = protocol::PacketHeader {
-                    ty: protocol::PacketType::TDSv7Login,
-                    status: protocol::PacketStatus::EndOfMessage,
+                let header = PacketHeader {
+                    ty: PacketType::TDSv7Login,
+                    status: PacketStatus::EndOfMessage,
                     ..self.ctx.new_header(buf.len())
                 };
 
@@ -549,9 +553,9 @@ impl<T: TlsStream> Connecting<MaybeTlsStream<T>> {
         }
 
         let mut buf = login_message.serialize(&self.ctx)?;
-        let header = protocol::PacketHeader {
-            ty: protocol::PacketType::TDSv7Login,
-            status: protocol::PacketStatus::EndOfMessage,
+        let header = PacketHeader {
+            ty: PacketType::TDSv7Login,
+            status: PacketStatus::EndOfMessage,
             ..self.ctx.new_header(buf.len())
         };
         header.serialize(&mut buf)?;
@@ -587,7 +591,7 @@ impl<T: TlsStream> Connecting<MaybeTlsStream<T>> {
         let mut reader = protocol::PacketReader::new(&mut self.stream);
         let header = reader.read_header().await?;
         event!(Level::TRACE, "Received {:?}", header.ty);
-        if header.ty != protocol::PacketType::TabularResult {
+        if header.ty != PacketType::TabularResult {
             return Err(Error::Protocol(
                 "expected tabular result in response to login message".into(),
             ));
@@ -601,9 +605,9 @@ impl<T: TlsStream> Connecting<MaybeTlsStream<T>> {
         match sspi_client.next_bytes(Some(sspi_bytes))? {
             Some(sspi_response) => {
                 event!(Level::TRACE, sspi_response_len = sspi_response.len());
-                let header = protocol::PacketHeader {
-                    ty: protocol::PacketType::TDSv7Login,
-                    status: protocol::PacketStatus::EndOfMessage,
+                let header = PacketHeader {
+                    ty: PacketType::TDSv7Login,
+                    status: PacketStatus::EndOfMessage,
                     ..self
                         .ctx
                         .new_header(sspi_response.len() + protocol::HEADER_BYTES)

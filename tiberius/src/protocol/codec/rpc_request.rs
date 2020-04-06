@@ -1,6 +1,10 @@
 use super::Encode;
 use crate::{
-    protocol::{self, codec::ColumnData, PacketHeader, PacketStatus, PacketType, PacketWriter},
+    protocol::{
+        self,
+        codec::{ColumnData, PacketHeader, PacketStatus, PacketType},
+        PacketWriter,
+    },
     Error, Result,
 };
 use bitflags::bitflags;
@@ -130,7 +134,7 @@ impl<'a> Encode<'a, BytesMut> for TokenRpcRequest<'a> {
             param.encode(dst)?;
         }
 
-        todo!()
+        Ok(())
     }
 }
 

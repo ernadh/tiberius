@@ -5,6 +5,7 @@ use std::task::{self, Poll};
 
 use crate::protocol;
 use futures_util::ready;
+use protocol::codec::{PacketHeader, PacketStatus, PacketType};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{self, debug_span, event, trace_span, Level};
 
@@ -134,11 +135,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsPreloginWrapper<S> {
                 inner.header_pos += read;
             }
 
-            let header = protocol::PacketHeader::unserialize(&inner.header_buf)
+            let header = PacketHeader::unserialize(&inner.header_buf)
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
-            assert_eq!(header.ty, protocol::PacketType::PreLogin);
-            assert_eq!(header.status, protocol::PacketStatus::EndOfMessage);
+            assert_eq!(header.ty, PacketType::PreLogin);
+            assert_eq!(header.status, PacketStatus::EndOfMessage);
             inner.read_remaining = header.length as usize - protocol::HEADER_BYTES;
             event!(Level::TRACE, packet_bytes = inner.read_remaining);
         }
@@ -152,6 +153,43 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for TlsPreloginWrapper<S> {
             inner.header_pos = 0;
         }
         Poll::Ready(Ok(read))
+    }
+    unsafe fn prepare_uninitialized_buffer(&self, buf: &mut [MaybeUninit<u8>]) -> bool {
+        for x in buf {
+            *x.as_mut_ptr() = 0;
+        }
+
+        true
+    }
+    fn poll_read_buf<B: bytes::BufMut>(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &mut B,
+    ) -> Poll<io::Result<usize>>
+    where
+        Self: Sized,
+    {
+        if !buf.has_remaining_mut() {
+            return Poll::Ready(Ok(0));
+        }
+
+        unsafe {
+            let n = {
+                let b = buf.bytes_mut();
+
+                self.prepare_uninitialized_buffer(b);
+
+                // Convert to `&mut [u8]`
+                let b = &mut *(b as *mut [MaybeUninit<u8>] as *mut [u8]);
+
+                let n = ready!(self.poll_read(cx, b))?;
+                assert!(n <= b.len(), "Bad AsyncRead implementation, more bytes were reported as read than the buffer can hold");
+                n
+            };
+
+            buf.advance_mut(n);
+            Poll::Ready(Ok(n))
+        }
     }
 }
 
@@ -182,9 +220,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for TlsPreloginWrapper<S> {
 
             if !inner.header_written {
                 event!(Level::TRACE, "prepending header to buf");
-                let mut header = protocol::PacketHeader::new(inner.wr_buf.len(), 0);
-                header.ty = protocol::PacketType::PreLogin;
-                header.status = protocol::PacketStatus::EndOfMessage;
+                let mut header = PacketHeader::new(inner.wr_buf.len(), 0);
+                header.ty = PacketType::PreLogin;
+                header.status = PacketStatus::EndOfMessage;
                 header.serialize(&mut inner.wr_buf)?;
                 inner.header_written = true;
             }

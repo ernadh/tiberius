@@ -256,9 +256,9 @@ impl Connection {
 
         // Fire a query (TODO: use for simple_exec?)
         event!(Level::DEBUG, "WRITING simple QUERY");
-        let header = protocol::PacketHeader {
-            ty: protocol::PacketType::SQLBatch,
-            status: protocol::PacketStatus::NormalMessage,
+        let header = PacketHeader {
+            ty: PacketType::SQLBatch,
+            status: PacketStatus::NormalMessage,
             ..self.ctx.new_header(0)
         };
         let mut wr = protocol::PacketWriter::new(&mut *writer, header);
