@@ -1,5 +1,7 @@
+use super::{Decode, Encode};
 use crate::{uint_enum, Error};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use bytes::{Buf, BufMut, BytesMut};
 use std::{
     convert::TryFrom,
     io::{self, Cursor},
@@ -98,6 +100,46 @@ impl PacketHeader {
             spid: cursor.read_u16::<BigEndian>()?,
             id: cursor.read_u8()?,
             window: cursor.read_u8()?,
+        };
+
+        Ok(header)
+    }
+}
+
+impl<'a> Encode<'a, BytesMut> for PacketHeader {
+    fn encode(self, dst: &mut BytesMut) -> crate::Result<()> {
+        dst.put_u8(self.ty as u8);
+        dst.put_u8(self.status as u8);
+        dst.put_u16(self.length);
+        dst.put_u16(self.spid);
+        dst.put_u8(self.id);
+        dst.put_u8(self.window);
+
+        Ok(())
+    }
+}
+
+impl<'a> Decode<'a, BytesMut> for PacketHeader {
+    fn decode(src: &mut BytesMut) -> crate::Result<Self>
+    where
+        Self: Sized,
+    {
+        let raw_ty = src.get_u8();
+
+        let ty = PacketType::try_from(raw_ty).map_err(|_| {
+            Error::Protocol(format!("header: invalid packet type: {}", raw_ty).into())
+        })?;
+
+        let status = PacketStatus::try_from(src.get_u8())
+            .map_err(|_| Error::Protocol("header: invalid packet status".into()))?;
+
+        let header = PacketHeader {
+            ty,
+            status,
+            length: src.get_u16(),
+            spid: src.get_u16(),
+            id: src.get_u8(),
+            window: src.get_u8(),
         };
 
         Ok(header)
